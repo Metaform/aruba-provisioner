@@ -93,3 +93,75 @@ data:
   EDC_DATASOURCE_DEFAULT_PASSWORD: "${PARTICIPANT_NAME}"
   EDC_SQL_SCHEMA_AUTOCREATE: "true"
   EDC_IAM_ACCESSTOKEN_JTI_VALIDATION: "true"
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PARTICIPANT_NAME}-identityhub
+  namespace: ${PARTICIPANT_NAME}
+spec:
+  type: NodePort
+  selector:
+    App: ${PARTICIPANT_NAME}-identityhub
+  ports:
+    - port: 7082
+      targetPort: 7082
+      name: creds-port
+    - port: 1044
+      targetPort: 1044
+      name: debug
+    - port: 7081
+      targetPort: 7081
+      name: identity-api
+    - port: 7083
+      targetPort: 7083
+      name: did
+    - port: 7084
+      targetPort: 7084
+      name: sts
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${PARTICIPANT_NAME}-identityhub
+  namespace: ${PARTICIPANT_NAME}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /${PARTICIPANT_NAME}/cs(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-identityhub
+                port:
+                  number: 7081
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${PARTICIPANT_NAME}-did
+  namespace: ${PARTICIPANT_NAME}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/${PARTICIPANT_NAME}/$2"
+
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /${PARTICIPANT_NAME}(/|&)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-identityhub
+                port:
+                  number: 7083
