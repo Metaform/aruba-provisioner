@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/gofiber/fiber/v2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -27,18 +28,8 @@ var participantYaml string
 var identityhubYaml string
 
 func main() {
-	participantName := flag.String("participant", "", "Name of the participant")
-	did := flag.String("did", "", "DID of the participant")
 	kubeconfig := flag.String("kubeconfig", "~/.kube/config", "Path to kubeconfig file")
-	shouldDelete := flag.Bool("delete", false, "Delete resources")
 	flag.Parse()
-
-	if *participantName == "" {
-		log.Fatal("--participant is required")
-	}
-	if *did == "" {
-		log.Fatal("--did is required")
-	}
 
 	ctx := context.Background()
 
@@ -55,34 +46,82 @@ func main() {
 	_ = corev1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
 
-	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	kubeClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("create client: %v", err)
 	}
 
-	act := apply
-	if *shouldDelete {
-		fmt.Println("Deleting resources")
-		act = func(c client.Client, ctx context.Context, object client.Object) error {
-			return c.Delete(ctx, object)
-		}
-	}
-	processYaml(participantName, did, c, ctx, participantYaml, act)
-	processYaml(participantName, did, c, ctx, identityhubYaml, act)
+	app := fiber.New()
+	{
+		group := app.Group("/api/v1")
+		group.Post("/", func(c *fiber.Ctx) error {
+			var request ParticipantDefinition
+			if err := c.BodyParser(&request); err != nil {
+				return err
+			}
 
-	//delete resources
-	//time.Sleep(time.Second * 10)
-	//processYaml(participantName, did, c, ctx, participantYaml, func(c client.Client, ctx context.Context, object client.Object) error {
-	//	return c.Delete(ctx, object)
-	//})
-	//processYaml(participantName, did, c, ctx, identityhubYaml, func(c client.Client, ctx context.Context, object client.Object) error {
-	//	return c.Delete(ctx, object)
-	//})
+			fmt.Println("Creating resources")
+			resources1, e1 := applyYaml(&request.ParticipantName, &request.Did, kubeClient, ctx, participantYaml, applyResource)
+			if e1 != nil {
+				return e1
+			}
+			resources2, e2 := applyYaml(&request.ParticipantName, &request.Did, kubeClient, ctx, identityhubYaml, applyResource)
+			if e2 != nil {
+				return e2
+			}
+			// Merge maps
+			mergedResources := make(map[string]string)
+			for k, v := range resources1 {
+				mergedResources[k] = v
+			}
+			for k, v := range resources2 {
+				mergedResources[k] = v
+			}
+
+			return c.JSON(mergedResources)
+
+		})
+		group.Delete("/", func(c *fiber.Ctx) error {
+			var request ParticipantDefinition
+			if err := c.BodyParser(&request); err != nil {
+				return err
+			}
+			fmt.Println("Deleting resources")
+			resources1, e1 := applyYaml(&request.ParticipantName, &request.Did, kubeClient, ctx, participantYaml, deleteResource)
+			if e1 != nil {
+				return e1
+			}
+			resources2, e2 := applyYaml(&request.ParticipantName, &request.Did, kubeClient, ctx, identityhubYaml, deleteResource)
+			if e2 != nil {
+				return e2
+			}
+			// Merge maps
+			mergedResources := make(map[string]string)
+			for k, v := range resources1 {
+				mergedResources[k] = v
+			}
+			for k, v := range resources2 {
+				mergedResources[k] = v
+			}
+
+			return c.JSON(mergedResources)
+		})
+
+	}
+	err = app.Listen(":9999")
+	if err != nil {
+		panic(err)
+	}
+}
+
+type ParticipantDefinition struct {
+	ParticipantName string `json:"participantName,omitempty" validate:"required"`
+	Did             string `json:"did,omitempty" validate:"required"`
 }
 
 type action func(client.Client, context.Context, client.Object) error
 
-func processYaml(participantName *string, did *string, c client.Client, ctx context.Context, yamlString string, kubernetesAction action) {
+func applyYaml(participantName *string, did *string, c client.Client, ctx context.Context, yamlString string, kubernetesAction action) (map[string]string, error) {
 	yamlString = strings.Replace(yamlString, "${PARTICIPANT_NAME}", *participantName, -1)
 	yamlString = strings.Replace(yamlString, "$PARTICIPANT_NAME", *participantName, -1)
 	yamlString = strings.Replace(yamlString, "${PARTICIPANT_ID}", *did, -1)
@@ -90,6 +129,7 @@ func processYaml(participantName *string, did *string, c client.Client, ctx cont
 
 	docs := strings.Split(yamlString, "---")
 
+	resourceMap := make(map[string]string)
 	for _, doc := range docs {
 		doc = strings.TrimSpace(doc)
 		if doc == "" {
@@ -98,29 +138,31 @@ func processYaml(participantName *string, did *string, c client.Client, ctx cont
 
 		obj := &unstructured.Unstructured{}
 		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
-			panic(err)
+			return nil, err
 		}
 
-		fmt.Printf("Processing resource: kind=%v, name=%v\n",
-			obj.GetKind(),
-			obj.GetName())
-
+		resourceMap[obj.GetName()] = obj.GetKind()
 		err := kubernetesAction(c, ctx, obj)
 		if err != nil {
-			log.Fatalf("applying yaml: %v", err)
+			return nil, err
 		}
 	}
+	return resourceMap, nil
 }
 
-func apply(c client.Client, ctx context.Context, object client.Object) error {
+func applyResource(c client.Client, ctx context.Context, object client.Object) error {
 	// Server-Side Apply
 	err := c.Patch(
 		ctx,
 		object,
 		client.Apply,
-		client.FieldOwner("my-go-app"),
+		client.FieldOwner("go-provisioner"),
 		// Optional: take ownership of fields (overwrites conflicts)
 		client.ForceOwnership,
 	)
 	return err
+}
+
+func deleteResource(c client.Client, ctx context.Context, object client.Object) error {
+	return c.Delete(ctx, object)
 }

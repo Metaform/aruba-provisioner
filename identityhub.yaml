@@ -2,19 +2,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ${PARTICIPANT_NAME}-identityhub
+  name: identityhub
   namespace: ${PARTICIPANT_NAME}
   labels:
-    App: ${PARTICIPANT_NAME}-identityhub
+    App: identityhub
 spec:
   replicas: 1
   selector:
     matchLabels:
-      App: ${PARTICIPANT_NAME}-identityhub
+      App: identityhub
   template:
     metadata:
       labels:
-        App: ${PARTICIPANT_NAME}-identityhub
+        App: identityhub
     spec:
       containers:
         - name: identityhub
@@ -22,7 +22,7 @@ spec:
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
-                name: ${PARTICIPANT_NAME}-ih-config
+                name: ih-config
           ports:
             - containerPort: 7082
               name: creds-port
@@ -61,7 +61,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ${PARTICIPANT_NAME}-ih-config
+  name: ih-config
   namespace: ${PARTICIPANT_NAME}
 data:
   EDC_IH_IAM_ID: "${PARTICIPANT_ID}"
@@ -85,10 +85,10 @@ data:
   EDC_IAM_STS_PUBLICKEY_ID: "key-1"
   EDC_MVD_CREDENTIALS_PATH: "/etc/credentials/"
 
-  EDC_VAULT_HASHICORP_URL: "http://${PARTICIPANT_NAME}-vault.${PARTICIPANT_NAME}.svc.cluster.local:8200"
+  EDC_VAULT_HASHICORP_URL: "http://vault.${PARTICIPANT_NAME}.svc.cluster.local:8200"
   EDC_VAULT_HASHICORP_TOKEN: "root"
 
-  EDC_DATASOURCE_DEFAULT_URL: "jdbc:postgresql://${PARTICIPANT_NAME}-postgres-service.${PARTICIPANT_NAME}.svc.cluster.local:5432/${PARTICIPANT_NAME}"
+  EDC_DATASOURCE_DEFAULT_URL: "jdbc:postgresql://postgres-service.${PARTICIPANT_NAME}.svc.cluster.local:5432/${PARTICIPANT_NAME}"
   EDC_DATASOURCE_DEFAULT_USER: "${PARTICIPANT_NAME}"
   EDC_DATASOURCE_DEFAULT_PASSWORD: "${PARTICIPANT_NAME}"
   EDC_SQL_SCHEMA_AUTOCREATE: "true"
@@ -99,12 +99,12 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ${PARTICIPANT_NAME}-identityhub
+  name: identityhub
   namespace: ${PARTICIPANT_NAME}
 spec:
   type: NodePort
   selector:
-    App: ${PARTICIPANT_NAME}-identityhub
+    App: identityhub
   ports:
     - port: 7082
       targetPort: 7082
@@ -126,7 +126,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ${PARTICIPANT_NAME}-identityhub
+  name: identityhub
   namespace: ${PARTICIPANT_NAME}
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: "/$2"
@@ -140,7 +140,7 @@ spec:
             pathType: ImplementationSpecific
             backend:
               service:
-                name: ${PARTICIPANT_NAME}-identityhub
+                name: identityhub
                 port:
                   number: 7081
 
@@ -148,7 +148,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ${PARTICIPANT_NAME}-did
+  name: did
   namespace: ${PARTICIPANT_NAME}
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: "/${PARTICIPANT_NAME}/$2"
@@ -162,6 +162,6 @@ spec:
             pathType: ImplementationSpecific
             backend:
               service:
-                name: ${PARTICIPANT_NAME}-identityhub
+                name: identityhub
                 port:
                   number: 7083
