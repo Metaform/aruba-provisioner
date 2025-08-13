@@ -31,6 +31,8 @@ var identityhubYaml string
 // Centralize deployment names used for readiness checks
 var participantDeploymentNames = []string{"controlplane", "identityhub", "dataplane"}
 
+const readinessPollInterval = 2 * time.Second
+
 func main() {
 	kubeconfig := flag.String("kubeconfig", "~/.kube/config", "Path to kubeconfig file")
 	flag.Parse()
@@ -86,7 +88,7 @@ func main() {
 			namespace := request.ParticipantName
 
 			// Start readiness wait in a separate goroutine (non-blocking request)
-			waitForParticipantDeploymentsAsync(
+			waitForDeploymentsAsync(
 				kubeClient,
 				ctx,
 				namespace,
@@ -185,9 +187,8 @@ func deleteResource(c client.Client, ctx context.Context, object client.Object) 
 	return c.Delete(ctx, object)
 }
 
-// Start deployment readiness check in the background and log the outcome. The callback is called when all
-// deployments are ready.
-func waitForParticipantDeploymentsAsync(
+// waitForDeploymentsAsync runs the readiness check in the background and invokes the callback on success.
+func waitForDeploymentsAsync(
 	c client.Client,
 	ctx context.Context,
 	namespace string,
@@ -196,7 +197,7 @@ func waitForParticipantDeploymentsAsync(
 ) {
 	fmt.Println("Waiting for deployments", deployments, "")
 	go func() {
-		if err := waitForMultipleDeployments(c, ctx, namespace, deployments); err != nil {
+		if err := waitForDeployments(c, ctx, namespace, deployments); err != nil {
 			fmt.Printf("deployment readiness check failed for namespace %s: %v\n", namespace, err)
 			return
 		}
@@ -204,51 +205,47 @@ func waitForParticipantDeploymentsAsync(
 	}()
 }
 
-// Wait for a deployment to be ready by querying the Kubernetes API every 2 seconds and checking whether the
-// desired number of replicas is reached.
+// waitForDeployments waits for all given deployments concurrently and returns an error if any fail.
+func waitForDeployments(c client.Client, ctx context.Context, namespace string, deployments []string) error {
+	errCh := make(chan error, len(deployments))
+	for _, name := range deployments {
+		name := name // capture
+		go func() {
+			errCh <- waitForDeployment(c, ctx, namespace, name)
+		}()
+	}
+	var firstErr error
+	for _, deployment := range deployments {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
+		} else if err == nil {
+			fmt.Println("Deployment", deployment, "ready")
+		}
+	}
+	return firstErr
+}
+
+// waitForDeployment polls until the deployment reaches the desired ready replicas.
 func waitForDeployment(c client.Client, ctx context.Context, namespace string, name string) error {
 	deployment := &appsv1.Deployment{}
 	for {
-		err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment)
-		if err != nil {
+		if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment); err != nil {
 			return err
 		}
 
-		if deployment.Status.ReadyReplicas == *deployment.Spec.Replicas {
+		desired := int32(1)
+		if deployment.Spec.Replicas != nil {
+			desired = *deployment.Spec.Replicas
+		}
+		if deployment.Status.ReadyReplicas == desired {
 			return nil
 		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Second * 2):
+		case <-time.After(readinessPollInterval):
 			continue
 		}
 	}
-}
-
-// waitForDeploymentAsync starts a goroutine to wait for a deployment to be ready and returns a channel for error reporting.
-func waitForDeploymentAsync(c client.Client, ctx context.Context, namespace string, name string) chan error {
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- waitForDeployment(c, ctx, namespace, name)
-	}()
-	return errChan
-}
-
-// waitForMultipleDeployments waits for multiple deployments in a given namespace to be ready and returns an error if any fail.
-func waitForMultipleDeployments(c client.Client, ctx context.Context, namespace string, deployments []string) error {
-	errChans := make([]chan error, len(deployments))
-	for i, deployment := range deployments {
-		errChans[i] = waitForDeploymentAsync(c, ctx, namespace, deployment)
-	}
-
-	for i, deployment := range deployments {
-		if err := <-errChans[i]; err != nil {
-			return fmt.Errorf("waiting for deployment %s: %w", deployment, err)
-		} else {
-			fmt.Println("Deployment", deployment, "ready")
-		}
-	}
-	return nil
 }
