@@ -1,0 +1,467 @@
+# required env vars:
+# PARTICIPANT_NAME: this is the name of the participant, it will be used for namespaces, service names etc.
+# PARTICIPANT_ID: this is the DID of the participant, it will be used for the did of the connector as well as the participant ID for DSP
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${PARTICIPANT_NAME}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${PARTICIPANT_NAME}-initdb-config
+  namespace: ${PARTICIPANT_NAME}
+data:
+  ${PARTICIPANT_NAME}-initdb-config.sql: |
+    CREATE USER ${PARTICIPANT_NAME} WITH ENCRYPTED PASSWORD '${PARTICIPANT_NAME}' SUPERUSER;
+    CREATE DATABASE ${PARTICIPANT_NAME};
+    \c ${PARTICIPANT_NAME} ${PARTICIPANT_NAME}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${PARTICIPANT_NAME}-postgres-env
+  namespace: ${PARTICIPANT_NAME}
+data:
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "postgres"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${PARTICIPANT_NAME}-postgres
+  namespace: ${PARTICIPANT_NAME}
+  labels:
+    App: ${PARTICIPANT_NAME}-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      App: ${PARTICIPANT_NAME}-postgres
+  template:
+    metadata:
+      labels:
+        App: ${PARTICIPANT_NAME}-postgres
+    spec:
+      containers:
+        - name: ${PARTICIPANT_NAME}-postgres
+          image: postgres:16.3-alpine3.20
+          ports:
+            - name: postgres-port
+              containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: ${PARTICIPANT_NAME}-postgres-env
+          volumeMounts:
+            - name: ${PARTICIPANT_NAME}-initdb-config
+              mountPath: /docker-entrypoint-initdb.d/${PARTICIPANT_NAME}-initdb-config.sql
+              subPath: ${PARTICIPANT_NAME}-initdb-config.sql
+              readOnly: true
+          livenessProbe:
+            exec:
+              command: [ "pg_isready", "-U", "postgres" ]
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+      volumes:
+        - name: ${PARTICIPANT_NAME}-initdb-config
+          configMap:
+            name: ${PARTICIPANT_NAME}-initdb-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PARTICIPANT_NAME}-postgres-service
+  namespace: ${PARTICIPANT_NAME}
+spec:
+  selector:
+    App: ${PARTICIPANT_NAME}-postgres
+  ports:
+    - name: pg-port
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${PARTICIPANT_NAME}-participants
+  namespace: ${PARTICIPANT_NAME}
+data:
+  participants.json: |
+    {
+      "${PARTICIPANT_NAME}-corp": "did:web:${PARTICIPANT_NAME}-identityhub.${PARTICIPANT_NAME}-security.svc.cluster.local%3A7083:${PARTICIPANT_NAME}",
+      "provider-corp": "did:web:provider-identityhub.mvd-provider-security.svc.cluster.local%3A7083:provider"
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${PARTICIPANT_NAME}-controlplane-config
+  namespace: ${PARTICIPANT_NAME}
+data:
+  EDC_PARTICIPANT_ID: "${PARTICIPANT_ID}"
+  EDC_IAM_ISSUER_ID: "<${PARTICIPANT_ID}"
+  EDC_IAM_DID_WEB_USE_HTTPS: "false"
+
+  WEB_HTTP_PORT: "8080"
+  WEB_HTTP_PATH: "/api"
+  WEB_HTTP_MANAGEMENT_PORT: "8081"
+  WEB_HTTP_MANAGEMENT_PATH: "/api/management"
+  WEB_HTTP_MANAGEMENT_AUTH_TYPE: "tokenbased"
+  WEB_HTTP_MANAGEMENT_AUTH_KEY: "password"
+  WEB_HTTP_CONTROL_PORT: "8083"
+  WEB_HTTP_CONTROL_PATH: "/api/control"
+  WEB_HTTP_PROTOCOL_PORT: "8082"
+  WEB_HTTP_PROTOCOL_PATH: "/api/dsp"
+  WEB_HTTP_CATALOG_PORT: "8084"
+  WEB_HTTP_CATALOG_PATH: "/api/catalog"
+  WEB_HTTP_CATALOG_AUTH_TYPE: "tokenbased"
+  WEB_HTTP_CATALOG_AUTH_KEY: "password"
+
+  EDC_DSP_CALLBACK_ADDRESS: "http://${PARTICIPANT_NAME}-controlplane.${PARTICIPANT_NAME}.svc.cluster.local:8082/api/dsp"
+  EDC_IAM_STS_PRIVATEKEY_ALIAS: "${PARTICIPANT_ID}#key-1"
+  EDC_IAM_STS_PUBLICKEY_ID: "${PARTICIPANT_ID}#key-1"
+  JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=1044"
+  EDC_IH_AUDIENCE_REGISTRY_PATH: "/etc/registry/registry.json"
+
+  EDC_VAULT_HASHICORP_URL: "http://${PARTICIPANT_NAME}-vault.${PARTICIPANT_NAME}.svc.cluster.local:8200"
+  EDC_VAULT_HASHICORP_TOKEN: "root"
+
+  EDC_MVD_PARTICIPANTS_LIST_FILE: "/etc/participants/participants.json"
+
+  EDC_DATASOURCE_DEFAULT_URL: "jdbc:postgresql://${PARTICIPANT_NAME}-postgres-service.${PARTICIPANT_NAME}.svc.cluster.local:5432/${PARTICIPANT_NAME}"
+  EDC_DATASOURCE_DEFAULT_USER: "${PARTICIPANT_NAME}"
+  EDC_DATASOURCE_DEFAULT_PASSWORD: "${PARTICIPANT_NAME}"
+  EDC_SQL_SCHEMA_AUTOCREATE: "true"
+
+  EDC_CATALOG_CACHE_EXECUTION_DELAY_SECONDS: "10"
+  EDC_CATALOG_CACHE_EXECUTION_PERIOD_SECONDS: "10"
+
+  EDC_IAM_STS_OAUTH_TOKEN_URL: "http://foobar/token"
+  EDC_IAM_STS_OAUTH_CLIENT_ID: "<${PARTICIPANT_NAME}-did>"
+  EDC_IAM_STS_OAUTH_CLIENT_SECRET_ALIAS: "<${PARTICIPANT_NAME}-did>-sts-client-secret"
+
+  # registry file mounted at /etc/registry/registry.json
+  registry.json: |
+    [
+    ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${PARTICIPANT_NAME}-controlplane
+  namespace: ${PARTICIPANT_NAME}
+  labels:
+    App: ${PARTICIPANT_NAME}-controlplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      App: ${PARTICIPANT_NAME}-controlplane
+  template:
+    metadata:
+      labels:
+        App: ${PARTICIPANT_NAME}-controlplane
+    spec:
+      containers:
+        - name: connector-${PARTICIPANT_NAME}
+          image: ghcr.io/paullatzelsperger/minimumviabledataspace/controlplane:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: ${PARTICIPANT_NAME}-controlplane-config
+          ports:
+            - containerPort: 8081
+              name: management-port
+            - containerPort: 8080
+              name: default-port
+            - containerPort: 1044
+              name: debug-port
+          livenessProbe:
+            httpGet:
+              path: /api/check/liveness
+              port: 8080
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/check/readiness
+              port: 8080
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          startupProbe:
+            httpGet:
+              path: /api/check/startup
+              port: 8080
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          volumeMounts:
+            - mountPath: /etc/registry
+              name: registry-volume
+            - mountPath: /etc/participants
+              name: participants-volume
+      volumes:
+        - name: registry-volume
+          configMap:
+            name: ${PARTICIPANT_NAME}-controlplane-config
+        - name: participants-volume
+          configMap:
+            name: ${PARTICIPANT_NAME}-participants
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PARTICIPANT_NAME}-controlplane
+  namespace: ${PARTICIPANT_NAME}
+spec:
+  type: NodePort
+  selector:
+    App: ${PARTICIPANT_NAME}-controlplane
+  ports:
+    - name: health
+      port: 8080
+      targetPort: 8080
+    - name: management
+      port: 8081
+      targetPort: 8081
+    - name: catalog
+      port: 8084
+      targetPort: 8084
+    - name: protocol
+      port: 8082
+      targetPort: 8082
+    - name: debug
+      port: 1044
+      targetPort: 1044
+    - name: control
+      port: 8083
+      targetPort: 8083
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${PARTICIPANT_NAME}-dataplane-config
+  namespace: ${PARTICIPANT_NAME}
+data:
+  EDC_HOSTNAME: "${PARTICIPANT_NAME}-dataplane.${PARTICIPANT_NAME}.svc.cluster.local"
+  EDC_RUNTIME_ID: "${PARTICIPANT_NAME}-dataplane"
+  EDC_PARTICIPANT_ID: "<${PARTICIPANT_NAME}-did>"
+
+  EDC_TRANSFER_PROXY_TOKEN_VERIFIER_PUBLICKEY_ALIAS: "<${PARTICIPANT_NAME}-did>#key-1"
+  EDC_TRANSFER_PROXY_TOKEN_SIGNER_PRIVATEKEY_ALIAS: "<${PARTICIPANT_NAME}-did>#key-1"
+
+  EDC_DPF_SELECTOR_URL: "http://${PARTICIPANT_NAME}-controlplane.${PARTICIPANT_NAME}.svc.cluster.local:8083/api/control/v1/dataplanes"
+
+  WEB_HTTP_PORT: "8080"
+  WEB_HTTP_PATH: "/api"
+  WEB_HTTP_CONTROL_PORT: "8083"
+  WEB_HTTP_CONTROL_PATH: "/api/control"
+  WEB_HTTP_PUBLIC_PORT: "11002"
+  WEB_HTTP_PUBLIC_PATH: "/api/public"
+
+  EDC_VAULT_HASHICORP_URL: "http://${PARTICIPANT_NAME}-vault.${PARTICIPANT_NAME}.svc.cluster.local:8200"
+  EDC_VAULT_HASHICORP_TOKEN: "root"
+
+  JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=1044"
+
+  EDC_DATASOURCE_DEFAULT_URL: "jdbc:postgresql://${PARTICIPANT_NAME}-postgres-service.${PARTICIPANT_NAME}.svc.cluster.local:5432/${PARTICIPANT_NAME}"
+  EDC_DATASOURCE_DEFAULT_USER: "${PARTICIPANT_NAME}"
+  EDC_DATASOURCE_DEFAULT_PASSWORD: "${PARTICIPANT_NAME}"
+  EDC_SQL_SCHEMA_AUTOCREATE: "true"
+
+  EDC_IAM_STS_OAUTH_TOKEN_URL: "http://foobar/token"
+  EDC_IAM_STS_OAUTH_CLIENT_ID: "<${PARTICIPANT_NAME}-did>"
+  EDC_IAM_STS_OAUTH_CLIENT_SECRET_ALIAS: "<${PARTICIPANT_NAME}-did>-sts-client-secret"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${PARTICIPANT_NAME}-dataplane
+  namespace: ${PARTICIPANT_NAME}
+  labels:
+    App: ${PARTICIPANT_NAME}-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      App: ${PARTICIPANT_NAME}-dataplane
+  template:
+    metadata:
+      labels:
+        App: ${PARTICIPANT_NAME}-dataplane
+    spec:
+      containers:
+        - name: dataplane-${PARTICIPANT_NAME}
+          image: ghcr.io/paullatzelsperger/minimumviabledataspace/dataplane:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: ${PARTICIPANT_NAME}-dataplane-config
+          ports:
+            - containerPort: 11002
+              name: public-port
+            - containerPort: 1044
+              name: debug-port
+          livenessProbe:
+            httpGet:
+              path: /api/check/liveness
+              port: 8080
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/check/readiness
+              port: 8080
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+          startupProbe:
+            httpGet:
+              path: /api/check/startup
+              port: 8080
+            failureThreshold: 10
+            periodSeconds: 5
+            timeoutSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PARTICIPANT_NAME}-dataplane
+  namespace: ${PARTICIPANT_NAME}
+spec:
+  type: NodePort
+  selector:
+    App: ${PARTICIPANT_NAME}-dataplane
+  ports:
+    - name: control
+      port: 8083
+      targetPort: 8083
+    - name: public
+      port: 11002
+      targetPort: 11002
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${PARTICIPANT_NAME}-ingress
+  namespace: ${PARTICIPANT_NAME}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /${PARTICIPANT_NAME}/health(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-controlplane
+                port:
+                  number: 8080
+          - path: /${PARTICIPANT_NAME}/cp(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-controlplane
+                port:
+                  number: 8081
+          - path: /${PARTICIPANT_NAME}/fc(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-controlplane
+                port:
+                  number: 8084
+          - path: /${PARTICIPANT_NAME}/vault(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-vault
+                port:
+                  number: 8200
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${PARTICIPANT_NAME}-ingress-data
+  namespace: ${PARTICIPANT_NAME}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /${PARTICIPANT_NAME}/public(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: ${PARTICIPANT_NAME}-dataplane
+                port:
+                  number: 11002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${PARTICIPANT_NAME}-vault
+  namespace: ${PARTICIPANT_NAME}
+  labels:
+    app: ${PARTICIPANT_NAME}-vault
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${PARTICIPANT_NAME}-vault
+  template:
+    metadata:
+      labels:
+        app: ${PARTICIPANT_NAME}-vault
+    spec:
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.15.6
+          imagePullPolicy: IfNotPresent
+          args:
+            - "server"
+            - "-dev"
+            - "-dev-listen-address=0.0.0.0:8200"
+            - "-dev-root-token-id=$(VAULT_DEV_ROOT_TOKEN)"
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN
+              value: "root"
+          ports:
+            - containerPort: 8200
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+              port: 8200
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health
+              port: 8200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PARTICIPANT_NAME}-vault
+  namespace: ${PARTICIPANT_NAME}
+spec:
+  selector:
+    app: ${PARTICIPANT_NAME}-vault
+  ports:
+    - name: http
+      port: 8200
+      targetPort: 8200
