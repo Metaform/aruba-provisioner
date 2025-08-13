@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	appsv1 "k8s.io/api/apps/v1"
@@ -26,6 +27,9 @@ var participantYaml string
 
 //go:embed identityhub.yaml
 var identityhubYaml string
+
+// Centralize deployment names used for readiness checks
+var participantDeploymentNames = []string{"controlplane", "identityhub", "dataplane"}
 
 func main() {
 	kubeconfig := flag.String("kubeconfig", "~/.kube/config", "Path to kubeconfig file")
@@ -77,6 +81,20 @@ func main() {
 			for k, v := range resources2 {
 				mergedResources[k] = v
 			}
+
+			// Introduce a clear variable for namespace usage
+			namespace := request.ParticipantName
+
+			// Start readiness wait in a separate goroutine (non-blocking request)
+			waitForParticipantDeploymentsAsync(
+				kubeClient,
+				ctx,
+				namespace,
+				participantDeploymentNames,
+				func() {
+					fmt.Println("Deployments ready in namespace", namespace, "")
+				},
+			)
 
 			return c.JSON(mergedResources)
 
@@ -165,4 +183,72 @@ func applyResource(c client.Client, ctx context.Context, object client.Object) e
 
 func deleteResource(c client.Client, ctx context.Context, object client.Object) error {
 	return c.Delete(ctx, object)
+}
+
+// Start deployment readiness check in the background and log the outcome. The callback is called when all
+// deployments are ready.
+func waitForParticipantDeploymentsAsync(
+	c client.Client,
+	ctx context.Context,
+	namespace string,
+	deployments []string,
+	callback func(),
+) {
+	fmt.Println("Waiting for deployments", deployments, "")
+	go func() {
+		if err := waitForMultipleDeployments(c, ctx, namespace, deployments); err != nil {
+			fmt.Printf("deployment readiness check failed for namespace %s: %v\n", namespace, err)
+			return
+		}
+		callback()
+	}()
+}
+
+// Wait for a deployment to be ready by querying the Kubernetes API every 2 seconds and checking whether the
+// desired number of replicas is reached.
+func waitForDeployment(c client.Client, ctx context.Context, namespace string, name string) error {
+	deployment := &appsv1.Deployment{}
+	for {
+		err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment)
+		if err != nil {
+			return err
+		}
+
+		if deployment.Status.ReadyReplicas == *deployment.Spec.Replicas {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second * 2):
+			continue
+		}
+	}
+}
+
+// waitForDeploymentAsync starts a goroutine to wait for a deployment to be ready and returns a channel for error reporting.
+func waitForDeploymentAsync(c client.Client, ctx context.Context, namespace string, name string) chan error {
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- waitForDeployment(c, ctx, namespace, name)
+	}()
+	return errChan
+}
+
+// waitForMultipleDeployments waits for multiple deployments in a given namespace to be ready and returns an error if any fail.
+func waitForMultipleDeployments(c client.Client, ctx context.Context, namespace string, deployments []string) error {
+	errChans := make([]chan error, len(deployments))
+	for i, deployment := range deployments {
+		errChans[i] = waitForDeploymentAsync(c, ctx, namespace, deployment)
+	}
+
+	for i, deployment := range deployments {
+		if err := <-errChans[i]; err != nil {
+			return fmt.Errorf("waiting for deployment %s: %w", deployment, err)
+		} else {
+			fmt.Println("Deployment", deployment, "ready")
+		}
+	}
+	return nil
 }
