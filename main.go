@@ -164,8 +164,8 @@ func onDeploymentReady(definition ParticipantDefinition) {
 	fmt.Println("Deployments ready in namespace", definition.ParticipantName, "-> seeding data")
 
 	seedConnectorData(definition)
-
 	seedIdentityHubData(definition)
+
 }
 
 //go:embed resources/participant.json
@@ -194,7 +194,33 @@ func seedIdentityHubData(definition ParticipantDefinition) {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("participant created ", participant)
+	if participant == nil {
+		fmt.Println("participant already exists")
+		return
+	}
+
+	var mgmtApi = api.ManagementApiClient{
+		HttpClient: http.Client{},
+		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cp/api/management/v3",
+		ApiKey:     "password",
+	}
+	secretBody := `
+	{
+		"@context": [
+			"https://w3id.org/edc/connector/management/v0.0.1"
+		],
+		"@id": "${ID}",
+		"value": "${SECRET}"
+    }`
+	secretBody = strings.Replace(secretBody, "${ID}", participant.ClientId+"-sts-client-secret", -1)
+	secretBody = strings.Replace(secretBody, "${SECRET}", participant.ClientSecret, -1)
+
+	_, err = mgmtApi.CreateSecret(secretBody)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("participant created")
 }
 
 func seedConnectorData(definition ParticipantDefinition) {
@@ -238,6 +264,7 @@ func seedConnectorData(definition ParticipantDefinition) {
 		}
 	}
 	fmt.Println("contract definitions created")
+
 }
 
 type ParticipantDefinition struct {

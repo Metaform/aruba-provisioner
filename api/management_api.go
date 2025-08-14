@@ -8,6 +8,7 @@ type ManagementApi interface {
 	CreateAsset(body string) (string, error)
 	CreatePolicy(body string) (string, error)
 	CreateContractDefinition(body string) (string, error)
+	CreateSecret(body string) (string, error)
 }
 
 type ManagementApiClient struct {
@@ -26,4 +27,8 @@ func (m *ManagementApiClient) CreatePolicy(body string) (string, error) {
 func (m *ManagementApiClient) CreateContractDefinition(body string) (string, error) {
 	url := m.BaseUrl + "/contractdefinitions"
 	return sendRequest(m.HttpClient, m.ApiKey, body, url)
+}
+
+func (m *ManagementApiClient) CreateSecret(body string) (string, error) {
+	return sendRequest(m.HttpClient, m.ApiKey, body, m.BaseUrl+"/secrets")
 }

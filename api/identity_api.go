@@ -31,5 +31,8 @@ func (i *IdentityApiClient) CreateParticipant(body string) (*ParticipantResponse
 
 	var p ParticipantResponse
 	err = json.Unmarshal([]byte(jsonBody), &p)
+	if err != nil {
+		return nil, nil
+	}
 	return &p, err
 }
