@@ -3,9 +3,12 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
+	"mvd-go-provisioner/api"
+	"net/http"
 	"strings"
 	"time"
 
@@ -41,6 +44,7 @@ func main() {
 
 	// Load kubeconfig (or use in-cluster if applicable)
 	cfg, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+
 	if err != nil {
 		log.Fatalf("load kubeconfig: %v", err)
 	}
@@ -59,19 +63,21 @@ func main() {
 
 	app := fiber.New()
 	{
-		group := app.Group("/api/v1")
+		group := app.Group("/api/v1/resources")
 		group.Post("/", func(c *fiber.Ctx) error {
-			var request ParticipantDefinition
-			if err := c.BodyParser(&request); err != nil {
+			definition := ParticipantDefinition{
+				KubernetesIngressHost: "localhost",
+			}
+			if err := c.BodyParser(&definition); err != nil {
 				return err
 			}
 
 			fmt.Println("Creating resources")
-			resources1, e1 := applyYaml(&request.ParticipantName, &request.Did, kubeClient, ctx, participantYaml, applyResource)
+			resources1, e1 := applyYaml(&definition.ParticipantName, &definition.Did, kubeClient, ctx, participantYaml, applyResource)
 			if e1 != nil {
 				return e1
 			}
-			resources2, e2 := applyYaml(&request.ParticipantName, &request.Did, kubeClient, ctx, identityhubYaml, applyResource)
+			resources2, e2 := applyYaml(&definition.ParticipantName, &definition.Did, kubeClient, ctx, identityhubYaml, applyResource)
 			if e2 != nil {
 				return e2
 			}
@@ -85,16 +91,16 @@ func main() {
 			}
 
 			// Introduce a clear variable for namespace usage
-			namespace := request.ParticipantName
+			namespace := definition.ParticipantName
 
-			// Start readiness wait in a separate goroutine (non-blocking request)
+			// Start readiness wait in a separate goroutine (non-blocking definition)
 			waitForDeploymentsAsync(
 				kubeClient,
 				ctx,
 				namespace,
 				participantDeploymentNames,
 				func() {
-					fmt.Println("Deployments ready in namespace", namespace, "")
+					onDeploymentReady(definition)
 				},
 			)
 
@@ -126,7 +132,6 @@ func main() {
 
 			return c.JSON(mergedResources)
 		})
-
 	}
 	err = app.Listen(":9999")
 	if err != nil {
@@ -134,9 +139,111 @@ func main() {
 	}
 }
 
+//go:embed resources/asset1.json
+var asset1Json string
+
+//go:embed resources/asset2.json
+var asset2json string
+
+//go:embed resources/policy_dataprocessor.json
+var policyDataProcessorJson string
+
+//go:embed resources/policy_membership.json
+var policyMembershipJson string
+
+//go:embed resources/policy_sensitive_data.json
+var policySensitiveDataJson string
+
+//go:embed resources/contractdef_require_membership.json
+var defRequireMembership string
+
+//go:embed resources/contractdef_require_sensitive.json
+var defSensitive string
+
+func onDeploymentReady(definition ParticipantDefinition) {
+	fmt.Println("Deployments ready in namespace", definition.ParticipantName, "-> seeding data")
+
+	seedConnectorData(definition)
+
+	seedIdentityHubData(definition)
+}
+
+//go:embed resources/participant.json
+var participantJson string
+
+func seedIdentityHubData(definition ParticipantDefinition) {
+	kubernetesHost := definition.KubernetesIngressHost
+	namespace := definition.ParticipantName
+
+	identityApi := api.IdentityApiClient{
+		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cs/api/identity/v1alpha",
+		ApiKey:     "c3VwZXItdXNlcg==.c3VwZXItc2VjcmV0LWtleQo=",
+		HttpClient: http.Client{},
+	}
+	ihBaseUrl := fmt.Sprintf("http://identityhub.%s.svc.cluster.local:7082", namespace)
+	edcUrl := fmt.Sprintf("http://controlplane.%s.svc.cluster.local:8082", namespace)
+
+	participantJson = strings.Replace(participantJson, "${PARTICIPANT_NAME}", definition.ParticipantName, -1)
+	participantJson = strings.Replace(participantJson, "${PARTICIPANT_DID}", definition.Did, -1)
+	participantJson = strings.Replace(participantJson, "${PARTICIPANT_DID_BASE64}", base64.StdEncoding.EncodeToString([]byte(definition.Did)), -1)
+	participantJson = strings.Replace(participantJson, "${IH_BASE_URL}", ihBaseUrl, -1)
+	participantJson = strings.Replace(participantJson, "${EDC_BASE_URL}", edcUrl, -1)
+
+	participant, err := identityApi.CreateParticipant(participantJson)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("participant created ", participant)
+}
+
+func seedConnectorData(definition ParticipantDefinition) {
+
+	kubernetesHost := definition.KubernetesIngressHost
+	namespace := definition.ParticipantName
+
+	mgmtApi := api.ManagementApiClient{
+		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cp/api/management/v3",
+		ApiKey:     "password",
+		HttpClient: http.Client{},
+	}
+
+	// create assets
+	for _, asset := range []string{asset1Json, asset2json} {
+		_, err := mgmtApi.CreateAsset(asset)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+	}
+	fmt.Println("assets created")
+
+	// create policies
+	for _, policy := range []string{policyDataProcessorJson, policyMembershipJson, policySensitiveDataJson} {
+		_, err := mgmtApi.CreatePolicy(policy)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+	fmt.Println("policies created")
+
+	// create contract defs
+	for _, cd := range []string{defRequireMembership, defSensitive} {
+		_, err := mgmtApi.CreateContractDefinition(cd)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+	fmt.Println("contract definitions created")
+}
+
 type ParticipantDefinition struct {
-	ParticipantName string `json:"participantName,omitempty" validate:"required"`
-	Did             string `json:"did,omitempty" validate:"required"`
+	ParticipantName       string `json:"participantName,omitempty" validate:"required"`
+	Did                   string `json:"did,omitempty" validate:"required"`
+	KubernetesIngressHost string `json:"kubernetesIngressHost,omitempty"`
 }
 
 type action func(client.Client, context.Context, client.Object) error

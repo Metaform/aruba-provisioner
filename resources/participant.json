@@ -1,0 +1,25 @@
+{
+  "roles":[],
+  "serviceEndpoints":[
+    {
+      "type": "CredentialService",
+      "serviceEndpoint": "${IH_BASE_URL}/api/credentials/v1/participants/${PARTICIPANT_DID_BASE64}",
+      "id": "${PARTICIPANT_NAME}-credentialservice-1"
+    },
+    {
+      "type": "ProtocolEndpoint",
+      "serviceEndpoint": "${EDC_BASE_URL}/api/dsp",
+      "id": "${PARTICIPANT_NAME}-dsp"
+    }
+  ],
+  "active": true,
+  "participantId": "${PARTICIPANT_DID}",
+  "did": "${PARTICIPANT_DID}",
+  "key":{
+    "keyId": "${PARTICIPANT_DID}#key-1",
+    "privateKeyAlias": "${PARTICIPANT_DID}#key-1",
+    "keyGeneratorParams":{
+      "algorithm": "EC"
+    }
+  }
+}

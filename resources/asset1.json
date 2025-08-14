@@ -1,0 +1,17 @@
+{
+  "@context": [
+    "https://w3id.org/edc/connector/management/v0.0.1"
+  ],
+  "@id": "asset-1",
+  "@type": "Asset",
+  "properties": {
+    "description": "This asset requires Membership to view and negotiate."
+  },
+  "dataAddress": {
+    "@type": "DataAddress",
+    "type": "HttpData",
+    "baseUrl": "https://jsonplaceholder.typicode.com/todos",
+    "proxyPath": "true",
+    "proxyQueryParams": "true"
+  }
+}

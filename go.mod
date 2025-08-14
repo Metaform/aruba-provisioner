@@ -1,4 +1,4 @@
-module mvd-onboarder
+module mvd-go-provisioner
 
 go 1.24.0
 

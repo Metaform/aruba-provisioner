@@ -1,0 +1,15 @@
+{
+  "@context": [
+    "https://w3id.org/edc/connector/management/v0.0.1"
+  ],
+  "@id": "member-and-dataprocessor-def",
+  "@type": "ContractDefinition",
+  "accessPolicyId": "require-membership",
+  "contractPolicyId": "require-dataprocessor",
+  "assetsSelector": {
+    "@type": "Criterion",
+    "operandLeft": "https://w3id.org/edc/v0.0.1/ns/id",
+    "operator": "=",
+    "operandRight": "asset-1"
+  }
+}
