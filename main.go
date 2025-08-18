@@ -4,11 +4,13 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"mvd-go-provisioner/api"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -25,10 +28,10 @@ import (
 	_ "embed"
 )
 
-//go:embed connector.yaml
+//go:embed templates/connector.yaml
 var participantYaml string
 
-//go:embed identityhub.yaml
+//go:embed templates/identityhub.yaml
 var identityhubYaml string
 
 // Centralize deployment names used for readiness checks
@@ -40,14 +43,33 @@ func main() {
 	kubeconfig := flag.String("kubeconfig", "~/.kube/config", "Path to kubeconfig file")
 	flag.Parse()
 
-	ctx := context.Background()
-
-	// Load kubeconfig (or use in-cluster if applicable)
-	cfg, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-
-	if err != nil {
-		log.Fatalf("load kubeconfig: %v", err)
+	konfig := &rest.Config{}
+	exists := true
+	if kubeconfig == nil {
+		exists = false
+	} else if _, err := os.Stat(*kubeconfig); errors.Is(err, os.ErrNotExist) {
+		fmt.Printf("kubeconfig file %s does not exist, falling back to in-cluster config\n", *kubeconfig)
+		exists = false
 	}
+	if exists {
+
+		// Load kubeconfig (or use in-cluster if applicable)
+		fmt.Println("Load kubeconfig from ", *kubeconfig, "")
+		cfg, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+		if err != nil {
+			log.Fatalf("load kubeconfig: %v", err)
+		}
+		konfig = cfg
+	} else {
+		fmt.Println("No kubeconfig provided, using in-cluster config", "")
+		cfg, err := rest.InClusterConfig()
+		if err != nil {
+			log.Fatalf("load in-cluster config: %v", err)
+		}
+		konfig = cfg
+	}
+
+	ctx := context.Background()
 
 	// Scheme with core types
 	// --- Prepare scheme ---
@@ -56,7 +78,7 @@ func main() {
 	_ = corev1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
 
-	kubeClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	kubeClient, err := client.New(konfig, client.Options{Scheme: scheme})
 	if err != nil {
 		log.Fatalf("create client: %v", err)
 	}
@@ -166,6 +188,8 @@ func onDeploymentReady(definition ParticipantDefinition) {
 	seedConnectorData(definition)
 	seedIdentityHubData(definition)
 
+	fmt.Println("Data seeding complete in namespace", definition.ParticipantName)
+
 }
 
 //go:embed resources/participant.json
@@ -270,7 +294,7 @@ func seedConnectorData(definition ParticipantDefinition) {
 type ParticipantDefinition struct {
 	ParticipantName       string `json:"participantName,omitempty" validate:"required"`
 	Did                   string `json:"did,omitempty" validate:"required"`
-	KubernetesIngressHost string `json:"kubernetesIngressHost,omitempty"`
+	KubernetesIngressHost string `json:"kubeHost,omitempty"`
 }
 
 type action func(client.Client, context.Context, client.Object) error

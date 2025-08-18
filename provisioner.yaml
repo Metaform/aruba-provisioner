@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provisioner
+  namespace: mvd-provisioner
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: namespace-patcher
+rules:
+  - apiGroups: [ "","apps","networking.k8s.io" ]
+    resources: [ "namespaces","pods","services","configmaps","deployments","ingresses" ]
+    verbs: [ "get", "patch", "update", "delete", "create" ]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: namespace-patcher-binding
+subjects:
+  - kind: ServiceAccount
+    name: provisioner
+    namespace: mvd-provisioner
+roleRef:
+  kind: ClusterRole
+  name: namespace-patcher
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-provisioner
+  namespace: mvd-provisioner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-provisioner
+  template:
+    metadata:
+      labels:
+        app: go-provisioner
+    spec:
+      serviceAccountName: provisioner
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: go-provisioner
+          image: ghcr.io/paullatzelsperger/go-provisioner:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 9999
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-provisioner
+  namespace: mvd-provisioner
+spec:
+  selector:
+    app: go-provisioner
+  ports:
+    - protocol: TCP
+      port: 9999
+      targetPort: 9999
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: go-provisioner
+  namespace: mvd-provisioner
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /provisioner(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: go-provisioner
+                port:
+                  number: 9999
