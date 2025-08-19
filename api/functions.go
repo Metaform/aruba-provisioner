@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+type ApiClient struct {
+	HttpClient http.Client
+	BaseUrl    string
+	ApiKey     string
+}
+
 func sendRequest(client http.Client, apiKey string, body string, url string) (string, error) {
 	payload := strings.NewReader(body)
 

@@ -1,9 +1,5 @@
 package api
 
-import (
-	"net/http"
-)
-
 type ManagementApi interface {
 	CreateAsset(body string) (string, error)
 	CreatePolicy(body string) (string, error)
@@ -11,24 +7,18 @@ type ManagementApi interface {
 	CreateSecret(body string) (string, error)
 }
 
-type ManagementApiClient struct {
-	HttpClient http.Client
-	BaseUrl    string
-	ApiKey     string
+func (i *ApiClient) CreateAsset(body string) (string, error) {
+	return sendRequest(i.HttpClient, i.ApiKey, body, i.BaseUrl+"/assets")
+}
+func (i *ApiClient) CreatePolicy(body string) (string, error) {
+	return sendRequest(i.HttpClient, i.ApiKey, body, i.BaseUrl+"/policydefinitions")
 }
 
-func (m *ManagementApiClient) CreateAsset(body string) (string, error) {
-	return sendRequest(m.HttpClient, m.ApiKey, body, m.BaseUrl+"/assets")
-}
-func (m *ManagementApiClient) CreatePolicy(body string) (string, error) {
-	return sendRequest(m.HttpClient, m.ApiKey, body, m.BaseUrl+"/policydefinitions")
+func (i *ApiClient) CreateContractDefinition(body string) (string, error) {
+	url := i.BaseUrl + "/contractdefinitions"
+	return sendRequest(i.HttpClient, i.ApiKey, body, url)
 }
 
-func (m *ManagementApiClient) CreateContractDefinition(body string) (string, error) {
-	url := m.BaseUrl + "/contractdefinitions"
-	return sendRequest(m.HttpClient, m.ApiKey, body, url)
-}
-
-func (m *ManagementApiClient) CreateSecret(body string) (string, error) {
-	return sendRequest(m.HttpClient, m.ApiKey, body, m.BaseUrl+"/secrets")
+func (i *ApiClient) CreateSecret(body string) (string, error) {
+	return sendRequest(i.HttpClient, i.ApiKey, body, i.BaseUrl+"/secrets")
 }

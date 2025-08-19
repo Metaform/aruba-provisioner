@@ -37,6 +37,8 @@ var identityhubYaml string
 // Centralize deployment names used for readiness checks
 var participantDeploymentNames = []string{"controlplane", "identityhub", "dataplane"}
 
+const apiKey = "c3VwZXItdXNlcg==.c3VwZXItc2VjcmV0LWtleQo="
+
 const readinessPollInterval = 2 * time.Second
 
 func main() {
@@ -187,21 +189,22 @@ func onDeploymentReady(definition ParticipantDefinition) {
 
 	seedConnectorData(definition)
 	seedIdentityHubData(definition)
+	seedIssuerData(definition)
 
 	fmt.Println("Data seeding complete in namespace", definition.ParticipantName)
 
 }
 
-//go:embed resources/participant.json
+//go:embed templates/participant.json
 var participantJson string
 
 func seedIdentityHubData(definition ParticipantDefinition) {
 	kubernetesHost := definition.KubernetesIngressHost
 	namespace := definition.ParticipantName
 
-	identityApi := api.IdentityApiClient{
+	identityApi := api.ApiClient{
 		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cs/api/identity/v1alpha",
-		ApiKey:     "c3VwZXItdXNlcg==.c3VwZXItc2VjcmV0LWtleQo=",
+		ApiKey:     apiKey,
 		HttpClient: http.Client{},
 	}
 	ihBaseUrl := fmt.Sprintf("http://identityhub.%s.svc.cluster.local:7082", namespace)
@@ -223,7 +226,7 @@ func seedIdentityHubData(definition ParticipantDefinition) {
 		return
 	}
 
-	var mgmtApi = api.ManagementApiClient{
+	var mgmtApi = api.ApiClient{
 		HttpClient: http.Client{},
 		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cp/api/management/v3",
 		ApiKey:     "password",
@@ -252,7 +255,7 @@ func seedConnectorData(definition ParticipantDefinition) {
 	kubernetesHost := definition.KubernetesIngressHost
 	namespace := definition.ParticipantName
 
-	mgmtApi := api.ManagementApiClient{
+	mgmtApi := api.ApiClient{
 		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cp/api/management/v3",
 		ApiKey:     "password",
 		HttpClient: http.Client{},
@@ -289,6 +292,24 @@ func seedConnectorData(definition ParticipantDefinition) {
 	}
 	fmt.Println("contract definitions created")
 
+}
+
+func seedIssuerData(definition ParticipantDefinition) {
+	kubernetesHost := definition.KubernetesIngressHost
+	issuerId := "did:web:dataspace-issuer-service.mvd-issuer.svc.cluster.local%3A10016:issuer"
+	issuerB64 := base64.StdEncoding.EncodeToString([]byte(issuerId))
+	issuerApi := api.ApiClient{
+		BaseUrl:    "http://" + kubernetesHost + "/issuer/ad/api/admin/v1alpha/participants/" + issuerB64,
+		ApiKey:     "c3VwZXItdXNlcg==.c3VwZXItc2VjcmV0LWtleQo=",
+		HttpClient: http.Client{},
+	}
+
+	err := issuerApi.CreateHolder(definition.Did, definition.Did, definition.ParticipantName)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("issuer account created for participant ", definition.ParticipantName)
 }
 
 type ParticipantDefinition struct {
