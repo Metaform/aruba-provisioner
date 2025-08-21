@@ -93,7 +93,8 @@ data:
   EDC_DATASOURCE_DEFAULT_PASSWORD: "${PARTICIPANT_NAME}"
   EDC_SQL_SCHEMA_AUTOCREATE: "true"
   EDC_IAM_ACCESSTOKEN_JTI_VALIDATION: "true"
-
+  # grace period for credential expiry, 3600*24 = 1 day
+  EDC_IAM_CREDENTIAL_RENEWAL_GRACEPERIOD: "86400"
 
 ---
 apiVersion: v1
