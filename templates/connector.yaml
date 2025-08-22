@@ -63,7 +63,7 @@ spec:
               command: [ "pg_isready", "-U", "postgres" ]
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
       volumes:
         - name: initdb-config
           configMap:
@@ -183,21 +183,21 @@ spec:
               port: 8080
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
           readinessProbe:
             httpGet:
               path: /api/check/readiness
               port: 8080
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
           startupProbe:
             httpGet:
               path: /api/check/startup
               port: 8080
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
           volumeMounts:
             - mountPath: /etc/registry
               name: registry-volume

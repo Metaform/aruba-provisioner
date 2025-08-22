@@ -41,21 +41,21 @@ spec:
               port: 7080
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
           readinessProbe:
             httpGet:
               path: /api/check/readiness
               port: 7080
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
           startupProbe:
             httpGet:
               path: /api/check/startup
               port: 7080
             failureThreshold: 10
             periodSeconds: 5
-            timeoutSeconds: 30
+            timeoutSeconds: 120
 
 ---
 apiVersion: v1
