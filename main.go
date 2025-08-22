@@ -2,13 +2,13 @@
 package main
 
 import (
+	"aruba-provisioner/api"
 	"context"
 	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
-	"mvd-go-provisioner/api"
 	"net/http"
 	"os"
 	"strings"

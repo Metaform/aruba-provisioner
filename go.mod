@@ -1,4 +1,4 @@
-module mvd-go-provisioner
+module aruba-provisioner
 
 go 1.24.0
 
