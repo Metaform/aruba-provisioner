@@ -296,7 +296,7 @@ func seedConnectorData(definition ParticipantDefinition) {
 
 func seedIssuerData(definition ParticipantDefinition) {
 	kubernetesHost := definition.KubernetesIngressHost
-	issuerId := "did:web:dataspace-issuer-service.mvd-issuer.svc.cluster.local%3A10016:issuer"
+	issuerId := "did:web:dataspace-issuer-service.poc-issuer.svc.cluster.local%3A10016:issuer"
 	issuerB64 := base64.StdEncoding.EncodeToString([]byte(issuerId))
 	issuerApi := api.ApiClient{
 		BaseUrl:    "http://" + kubernetesHost + "/issuer/ad/api/admin/v1alpha/participants/" + issuerB64,
