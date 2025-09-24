@@ -199,11 +199,11 @@ func onDeploymentReady(definition ParticipantDefinition) {
 var participantJson string
 
 func seedIdentityHubData(definition ParticipantDefinition) {
-	kubernetesHost := definition.KubernetesIngressHost
+	kubernetesHost := definition.getHost()
 	namespace := definition.ParticipantName
 
 	identityApi := api.ApiClient{
-		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cs/api/identity/v1alpha",
+		BaseUrl:    kubernetesHost + "/" + namespace + "/cs/api/identity/v1alpha",
 		ApiKey:     apiKey,
 		HttpClient: http.Client{},
 	}
@@ -228,7 +228,7 @@ func seedIdentityHubData(definition ParticipantDefinition) {
 
 	var mgmtApi = api.ApiClient{
 		HttpClient: http.Client{},
-		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cp/api/management/v3",
+		BaseUrl:    kubernetesHost + "/" + namespace + "/cp/api/management/v3",
 		ApiKey:     "password",
 	}
 	secretBody := `
@@ -252,11 +252,11 @@ func seedIdentityHubData(definition ParticipantDefinition) {
 
 func seedConnectorData(definition ParticipantDefinition) {
 
-	kubernetesHost := definition.KubernetesIngressHost
+	kubernetesHost := definition.getHost()
 	namespace := definition.ParticipantName
 
 	mgmtApi := api.ApiClient{
-		BaseUrl:    "http://" + kubernetesHost + "/" + namespace + "/cp/api/management/v3",
+		BaseUrl:    kubernetesHost + "/" + namespace + "/cp/api/management/v3",
 		ApiKey:     "password",
 		HttpClient: http.Client{},
 	}
@@ -295,11 +295,11 @@ func seedConnectorData(definition ParticipantDefinition) {
 }
 
 func seedIssuerData(definition ParticipantDefinition) {
-	kubernetesHost := definition.KubernetesIngressHost
+	kubernetesHost := definition.getHost()
 	issuerId := "did:web:dataspace-issuer-service.poc-issuer.svc.cluster.local%3A10016:issuer"
 	issuerB64 := base64.StdEncoding.EncodeToString([]byte(issuerId))
 	issuerApi := api.ApiClient{
-		BaseUrl:    "http://" + kubernetesHost + "/issuer/ad/api/admin/v1alpha/participants/" + issuerB64,
+		BaseUrl:    kubernetesHost + "/issuer/ad/api/admin/v1alpha/participants/" + issuerB64,
 		ApiKey:     "c3VwZXItdXNlcg==.c3VwZXItc2VjcmV0LWtleQo=",
 		HttpClient: http.Client{},
 	}
@@ -316,6 +316,18 @@ type ParticipantDefinition struct {
 	ParticipantName       string `json:"participantName,omitempty" validate:"required"`
 	Did                   string `json:"did,omitempty" validate:"required"`
 	KubernetesIngressHost string `json:"kubeHost,omitempty"`
+}
+
+func (p *ParticipantDefinition) getHost() string {
+	var host = p.KubernetesIngressHost
+	if p.KubernetesIngressHost != "" {
+		if strings.HasPrefix(p.KubernetesIngressHost, "http://") || strings.HasPrefix(p.KubernetesIngressHost, "https://") {
+			host = p.KubernetesIngressHost
+		} else {
+			host = "http://" + p.KubernetesIngressHost
+		}
+	}
+	return host
 }
 
 type action func(client.Client, context.Context, client.Object) error
