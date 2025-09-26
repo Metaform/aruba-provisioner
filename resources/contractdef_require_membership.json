@@ -5,7 +5,7 @@
   "@id": "member-and-dataprocessor-def",
   "@type": "ContractDefinition",
   "accessPolicyId": "require-membership",
-  "contractPolicyId": "require-dataprocessor",
+  "contractPolicyId": "require-membership",
   "assetsSelector": {
     "@type": "Criterion",
     "operandLeft": "https://w3id.org/edc/v0.0.1/ns/id",

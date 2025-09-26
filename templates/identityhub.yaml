@@ -64,7 +64,10 @@ metadata:
   name: ih-config
   namespace: ${PARTICIPANT_NAME}
 data:
+  EDC_HOSTNAME: "identityhub.${PARTICIPANT_NAME}.svc.cluster.local"
+  EDC_IAM_CREDENTIAL_REVOCATION_MIMETYPE: "application/json"
   EDC_IH_IAM_ID: "${PARTICIPANT_ID}"
+
   EDC_IAM_DID_WEB_USE_HTTPS: "false"
   EDC_IH_IAM_PUBLICKEY_ALIAS: "${PARTICIPANT_NAME}-publickey"
   EDC_IH_API_SUPERUSER_KEY: "c3VwZXItdXNlcg==.c3VwZXItc2VjcmV0LWtleQo="

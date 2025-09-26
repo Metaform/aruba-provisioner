@@ -99,9 +99,11 @@ metadata:
   name: controlplane-config
   namespace: ${PARTICIPANT_NAME}
 data:
+  EDC_HOSTNAME: "controlplane.${PARTICIPANT_NAME}.svc.cluster.local"
   EDC_PARTICIPANT_ID: "${PARTICIPANT_ID}"
   EDC_IAM_ISSUER_ID: "${PARTICIPANT_ID}"
   EDC_IAM_DID_WEB_USE_HTTPS: "false"
+  EDC_IAM_CREDENTIAL_REVOCATION_MIMETYPE: "application/json"
 
   WEB_HTTP_PORT: "8080"
   WEB_HTTP_PATH: "/api"
@@ -137,7 +139,7 @@ data:
   EDC_CATALOG_CACHE_EXECUTION_DELAY_SECONDS: "10"
   EDC_CATALOG_CACHE_EXECUTION_PERIOD_SECONDS: "10"
 
-  EDC_IAM_STS_OAUTH_TOKEN_URL: "http://foobar/token"
+  EDC_IAM_STS_OAUTH_TOKEN_URL: "http://identityhub.${PARTICIPANT_NAME}.svc.cluster.local:7084/api/sts/token"
   EDC_IAM_STS_OAUTH_CLIENT_ID: "${PARTICIPANT_ID}"
   EDC_IAM_STS_OAUTH_CLIENT_SECRET_ALIAS: "${PARTICIPANT_ID}-sts-client-secret"
 

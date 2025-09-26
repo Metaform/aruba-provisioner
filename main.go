@@ -199,6 +199,7 @@ func onDeploymentReady(definition ParticipantDefinition) {
 var participantJson string
 
 func seedIdentityHubData(definition ParticipantDefinition) {
+	json := participantJson
 	kubernetesHost := definition.getHost()
 	namespace := definition.ParticipantName
 
@@ -210,13 +211,13 @@ func seedIdentityHubData(definition ParticipantDefinition) {
 	ihBaseUrl := fmt.Sprintf("http://identityhub.%s.svc.cluster.local:7082", namespace)
 	edcUrl := fmt.Sprintf("http://controlplane.%s.svc.cluster.local:8082", namespace)
 
-	participantJson = strings.Replace(participantJson, "${PARTICIPANT_NAME}", definition.ParticipantName, -1)
-	participantJson = strings.Replace(participantJson, "${PARTICIPANT_DID}", definition.Did, -1)
-	participantJson = strings.Replace(participantJson, "${PARTICIPANT_DID_BASE64}", base64.StdEncoding.EncodeToString([]byte(definition.Did)), -1)
-	participantJson = strings.Replace(participantJson, "${IH_BASE_URL}", ihBaseUrl, -1)
-	participantJson = strings.Replace(participantJson, "${EDC_BASE_URL}", edcUrl, -1)
+	json = strings.Replace(json, "${PARTICIPANT_NAME}", definition.ParticipantName, -1)
+	json = strings.Replace(json, "${PARTICIPANT_DID}", definition.Did, -1)
+	json = strings.Replace(json, "${PARTICIPANT_DID_BASE64}", base64.StdEncoding.EncodeToString([]byte(definition.Did)), -1)
+	json = strings.Replace(json, "${IH_BASE_URL}", ihBaseUrl, -1)
+	json = strings.Replace(json, "${EDC_BASE_URL}", edcUrl, -1)
 
-	participant, err := identityApi.CreateParticipant(participantJson)
+	participant, err := identityApi.CreateParticipant(json)
 	if err != nil {
 		fmt.Println(err)
 		return
