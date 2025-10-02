@@ -3,6 +3,7 @@ package main
 
 import (
 	"aruba-provisioner/api"
+	"aruba-provisioner/api/status"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,9 +87,112 @@ func main() {
 		log.Fatalf("create client: %v", err)
 	}
 
+	statusChecker := status.NewStatusChecker(kubeClient)
+
 	app := fiber.New()
 	{
 		group := app.Group("/api/v1/resources")
+
+		group.Get("/", func(c *fiber.Ctx) error {
+			statusFilter := c.Query("status")
+			
+			pageStr := c.Query("page", "1")
+			page, err := strconv.Atoi(pageStr)
+			if err != nil || page < 1 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":   "Invalid page parameter",
+					"details": fmt.Sprintf("page must be a positive integer, got: %s", pageStr),
+				})
+			}
+			
+			limitStr := c.Query("limit", "10")
+			limit, err := strconv.Atoi(limitStr)
+			if err != nil || limit < 1 || limit > 100 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":   "Invalid limit parameter",
+					"details": fmt.Sprintf("limit must be an integer between 1 and 100, got: %s", limitStr),
+				})
+			}
+			
+			// Validate status filter if provided
+			if statusFilter != "" {
+				validStatuses := []string{"PROVISIONING", "READY", "DEGRADED", "FAILED", "DELETING", "NOT_FOUND"}
+				isValid := false
+				for _, status := range validStatuses {
+					if statusFilter == status {
+						isValid = true
+						break
+					}
+				}
+				if !isValid {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+						"error":   "Invalid status filter",
+						"details": fmt.Sprintf("status must be one of: %s, got: %s", strings.Join(validStatuses, ", "), statusFilter),
+					})
+				}
+			}
+			
+			participants, total, err := statusChecker.ListParticipants(ctx, statusFilter, page, limit)
+			if err != nil {
+				// Check if error is due to Kubernetes API being unavailable
+				if status.IsKubernetesUnavailableError(err) {
+					c.Set("Retry-After", "30")
+					return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+						"error":   "Service temporarily unavailable",
+						"details": "Unable to connect to Kubernetes API. Please try again later.",
+					})
+				}
+				// Other internal errors
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error":   "Failed to list participants",
+					"details": err.Error(),
+				})
+			}
+			
+			// Set pagination headers
+			c.Set("X-Total", strconv.Itoa(total))
+			c.Set("X-Page", strconv.Itoa(page))
+			c.Set("X-Limit", strconv.Itoa(limit))
+			
+			return c.JSON(participants)
+		})
+
+		group.Get("/:participantName/status", func(c *fiber.Ctx) error {
+			participantName := c.Params("participantName")
+			if participantName == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": "participantName is required",
+				})
+			}
+
+			response, err := statusChecker.GetParticipantStatus(ctx, participantName)
+			if err != nil {
+				// Check if error is due to Kubernetes API being unavailable
+				if status.IsKubernetesUnavailableError(err) {
+					c.Set("Retry-After", "30")
+					return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+						"error":   "Service temporarily unavailable",
+						"details": "Unable to connect to Kubernetes API. Please try again later.",
+					})
+				}
+				// Other internal errors
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error":   "Failed to get participant status",
+					"details": err.Error(),
+				})
+			}
+
+			// 404 if participant not found
+			if response.Status == status.StatusNotFound {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"message": response.Message,
+					"status":  response.Status,
+				})
+			}
+
+			return c.JSON(response)
+		})
+
 		group.Post("/", func(c *fiber.Ctx) error {
 			definition := ParticipantDefinition{
 				KubernetesIngressHost: "localhost",
@@ -125,8 +230,13 @@ func main() {
 				participantDeploymentNames,
 				func() {
 					onDeploymentReady(definition)
+					// Invalidate cache when deployment is ready
+					statusChecker.InvalidateCache(definition.ParticipantName)
 				},
 			)
+
+			// Invalidate cache after creating resources
+			statusChecker.InvalidateCache(definition.ParticipantName)
 
 			return c.JSON(mergedResources)
 
@@ -153,6 +263,9 @@ func main() {
 			for k, v := range resources2 {
 				mergedResources[k] = v
 			}
+
+			// Invalidate cache after deleting resources
+			statusChecker.InvalidateCache(request.ParticipantName)
 
 			return c.JSON(mergedResources)
 		})
